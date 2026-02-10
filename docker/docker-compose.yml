@@ -1,0 +1,150 @@
+version: "3.9"
+
+services:
+  # ─── Infrastructure ──────────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: concierge
+      POSTGRES_PASSWORD: concierge_pass
+      POSTGRES_DB: concierge
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U concierge"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─── Migrations (runs once then exits) ───────────────────────────────────────
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["npx", "prisma", "migrate", "deploy"]
+    environment:
+      DATABASE_URL: postgresql://concierge:concierge_pass@postgres:5432/concierge
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ─── Application services ────────────────────────────────────────────────────
+
+  ingress:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["node", "dist/ingress/server.js"]
+    ports:
+      - "3000:3000"
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://concierge:concierge_pass@postgres:5432/concierge
+      REDIS_URL: redis://redis:6379
+      INGRESS_PORT: "3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ingest-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["node", "dist/workers/ingest.worker.js"]
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://concierge:concierge_pass@postgres:5432/concierge
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  scheduler-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["node", "dist/workers/scheduler.worker.js"]
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://concierge:concierge_pass@postgres:5432/concierge
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  executor-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["node", "dist/workers/executor.worker.js"]
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://concierge:concierge_pass@postgres:5432/concierge
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  outbox-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["node", "dist/workers/outbox.worker.js"]
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://concierge:concierge_pass@postgres:5432/concierge
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  admin:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["node", "dist/admin/server.js"]
+    ports:
+      - "3001:3001"
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://concierge:concierge_pass@postgres:5432/concierge
+      REDIS_URL: redis://redis:6379
+      ADMIN_PORT: "3001"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pg_data:

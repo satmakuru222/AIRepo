@@ -1,0 +1,243 @@
+---
+# ─── Ingress Deployment ─────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingress
+  namespace: concierge
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: concierge-ingress
+  template:
+    metadata:
+      labels:
+        app: concierge-ingress
+    spec:
+      containers:
+        - name: ingress
+          image: concierge:latest
+          command: ["node", "dist/ingress/server.js"]
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: concierge-config
+            - secretRef:
+                name: concierge-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+# ─── Ingress Service ────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingress-svc
+  namespace: concierge
+spec:
+  selector:
+    app: concierge-ingress
+  ports:
+    - port: 80
+      targetPort: 3000
+  type: ClusterIP
+---
+# ─── Ingest Worker ──────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingest-worker
+  namespace: concierge
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: concierge-ingest
+  template:
+    metadata:
+      labels:
+        app: concierge-ingest
+    spec:
+      containers:
+        - name: ingest
+          image: concierge:latest
+          command: ["node", "dist/workers/ingest.worker.js"]
+          envFrom:
+            - configMapRef:
+                name: concierge-config
+            - secretRef:
+                name: concierge-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+# ─── Scheduler Worker (single replica to avoid duplicate scheduling) ────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scheduler-worker
+  namespace: concierge
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: concierge-scheduler
+  template:
+    metadata:
+      labels:
+        app: concierge-scheduler
+    spec:
+      containers:
+        - name: scheduler
+          image: concierge:latest
+          command: ["node", "dist/workers/scheduler.worker.js"]
+          envFrom:
+            - configMapRef:
+                name: concierge-config
+            - secretRef:
+                name: concierge-secrets
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+---
+# ─── Executor Worker ────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: executor-worker
+  namespace: concierge
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: concierge-executor
+  template:
+    metadata:
+      labels:
+        app: concierge-executor
+    spec:
+      containers:
+        - name: executor
+          image: concierge:latest
+          command: ["node", "dist/workers/executor.worker.js"]
+          envFrom:
+            - configMapRef:
+                name: concierge-config
+            - secretRef:
+                name: concierge-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+# ─── Outbox Worker ──────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: outbox-worker
+  namespace: concierge
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: concierge-outbox
+  template:
+    metadata:
+      labels:
+        app: concierge-outbox
+    spec:
+      containers:
+        - name: outbox
+          image: concierge:latest
+          command: ["node", "dist/workers/outbox.worker.js"]
+          envFrom:
+            - configMapRef:
+                name: concierge-config
+            - secretRef:
+                name: concierge-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+# ─── Admin Deployment ───────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin
+  namespace: concierge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: concierge-admin
+  template:
+    metadata:
+      labels:
+        app: concierge-admin
+    spec:
+      containers:
+        - name: admin
+          image: concierge:latest
+          command: ["node", "dist/admin/server.js"]
+          ports:
+            - containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: concierge-config
+            - secretRef:
+                name: concierge-secrets
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-svc
+  namespace: concierge
+spec:
+  selector:
+    app: concierge-admin
+  ports:
+    - port: 80
+      targetPort: 3001
+  type: ClusterIP

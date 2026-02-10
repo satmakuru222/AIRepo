@@ -1,0 +1,125 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Users ───────────────────────────────────────────────────────────────────
+
+model User {
+  userId         String   @id @default(uuid()) @map("user_id")
+  displayName    String   @map("display_name")
+  primaryEmail   String?  @unique @map("primary_email")
+  whatsappNumber String?  @unique @map("whatsapp_number")
+  status         String   @default("active") // active | suspended
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  preferences     Preference?
+  inboundMessages InboundMessage[]
+  tasks           Task[]
+  outboxMessages  OutboxMessage[]
+  taskEvents      TaskEvent[]
+
+  @@map("users")
+}
+
+// ─── Preferences ─────────────────────────────────────────────────────────────
+
+model Preference {
+  userId          String @id @map("user_id")
+  defaultAction   String @default("remind_and_draft") @map("default_action") // remind | remind_and_draft | send
+  tone            String @default("friendly") // friendly | formal | brief
+  timezone        String @default("America/New_York")
+  fallbackChannel String @default("email") @map("fallback_channel") // email | whatsapp
+
+  user User @relation(fields: [userId], references: [userId])
+
+  @@map("preferences")
+}
+
+// ─── Inbound Messages ───────────────────────────────────────────────────────
+
+model InboundMessage {
+  inboundId         String   @id @default(uuid()) @map("inbound_id")
+  userId            String   @map("user_id")
+  channel           String   // email | whatsapp
+  providerMessageId String   @map("provider_message_id")
+  idempotencyKey    String   @unique @map("idempotency_key")
+  rawTextRedacted   String?  @map("raw_text_redacted")
+  receivedAt        DateTime @default(now()) @map("received_at")
+  status            String   @default("received") // received | processed | failed
+
+  user  User   @relation(fields: [userId], references: [userId])
+  tasks Task[]
+
+  @@index([userId, receivedAt])
+  @@map("inbound_messages")
+}
+
+// ─── Tasks ──────────────────────────────────────────────────────────────────
+
+model Task {
+  taskId         String    @id @default(uuid()) @map("task_id")
+  userId         String    @map("user_id")
+  sourceInboundId String   @map("source_inbound_id")
+  dueAt          DateTime? @map("due_at")
+  actionType     String    @default("remind_and_draft") @map("action_type") // remind | remind_and_draft | send
+  contactHint    String?   @map("contact_hint")
+  context        String?
+  status         String    @default("pending") // pending | needs_clarification | due | executing | sending | done | failed
+  attemptCount   Int       @default(0) @map("attempt_count")
+  lastAttemptAt  DateTime? @map("last_attempt_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  user           User            @relation(fields: [userId], references: [userId])
+  sourceInbound  InboundMessage  @relation(fields: [sourceInboundId], references: [inboundId])
+  outboxMessages OutboxMessage[]
+  events         TaskEvent[]
+
+  @@index([status, dueAt])
+  @@index([userId, status])
+  @@map("tasks")
+}
+
+// ─── Outbox ─────────────────────────────────────────────────────────────────
+
+model OutboxMessage {
+  outboxId    String    @id @default(uuid()) @map("outbox_id")
+  taskId      String?   @map("task_id")
+  userId      String    @map("user_id")
+  channel     String    // email | whatsapp
+  payload     Json      // { subject?, body, to }
+  status      String    @default("queued") // queued | sending | sent | failed
+  attempts    Int       @default(0)
+  nextRetryAt DateTime  @default(now()) @map("next_retry_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  task Task? @relation(fields: [taskId], references: [taskId])
+  user User  @relation(fields: [userId], references: [userId])
+
+  @@index([status, nextRetryAt])
+  @@map("outbox")
+}
+
+// ─── Task Events (audit trail) ──────────────────────────────────────────────
+
+model TaskEvent {
+  eventId   String   @id @default(uuid()) @map("event_id")
+  taskId    String   @map("task_id")
+  userId    String   @map("user_id")
+  eventType String   @map("event_type") // created | clarification_sent | scheduled | due | executing | draft_generated | sending | sent | failed | retried
+  payload   Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  task Task @relation(fields: [taskId], references: [taskId])
+  user User @relation(fields: [userId], references: [userId])
+
+  @@index([taskId, createdAt])
+  @@map("task_events")
+}
